@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Paso 3D Feasibility Pro - v10.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { background-color: #0f172a; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
+        #rendererContainer { width: 100%; height: 100%; cursor: crosshair; }
+        .sidebar { height: 100vh; overflow-y: auto; scrollbar-width: thin; background: white; }
+        input[type=range] { accent-color: #4f46e5; height: 5px; width: 100%; }
+        #tooltip { 
+            position: absolute; pointer-events: none; background: rgba(15, 23, 42, 0.95); 
+            color: white; padding: 10px; border-radius: 6px; font-size: 11px; 
+            display: none; border: 1px solid #4f46e5; z-index: 100;
+        }
+        .warning-glow { animation: glow 1.5s infinite alternate; }
+        @keyframes glow { from { box-shadow: 0 0 5px #ef4444; } to { box-shadow: 0 0 20px #ef4444; } }
+    </style>
+</head>
+<body class="flex">
+
+    <div id="tooltip"></div>
+
+    <div class="sidebar w-96 p-6 z-10 border-r border-slate-200 flex flex-col">
+        <header class="mb-4">
+            <h1 class="text-xl font-black tracking-tighter italic">EL PASO <span class="text-indigo-600">ARC-ENGINE</span></h1>
+            <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Compliance Version 10.0</p>
+        </header>
+
+        <div id="compliance-hud" class="mb-6 p-4 rounded-lg hidden">
+            <h3 class="text-[10px] font-black uppercase mb-1" id="hud-title">Status</h3>
+            <p class="text-xs font-medium" id="hud-msg"></p>
+        </div>
+
+        <div class="flex-1 space-y-6 overflow-y-auto pr-2">
+            <section>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Zoning District</label>
+                <select id="zoning" class="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded" onchange="runAnalysis()"></select>
+            </section>
+
+            <section class="space-y-4">
+                <h3 class="text-[10px] font-bold text-slate-500 uppercase border-b pb-1">Site & Build Envelope</h3>
+                <div>
+                    <div class="flex justify-between text-xs mb-1"><span>Lot Dimensions</span><span id="label-lot" class="font-bold"></span></div>
+                    <input type="range" id="lw" min="20" max="500" value="150" oninput="runAnalysis()">
+                    <input type="range" id="ld" min="20" max="500" value="200" oninput="runAnalysis()">
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs mb-1"><span>Building Footprint</span><span id="label-bldg" class="font-bold text-indigo-600"></span></div>
+                    <input type="range" id="bw" min="10" max="400" value="80" oninput="runAnalysis()">
+                    <input type="range" id="bd" min="10" max="400" value="60" oninput="runAnalysis()">
+                </div>
+            </section>
+
+            <section class="space-y-4">
+                <h3 class="text-[10px] font-bold text-slate-500 uppercase border-b pb-1">Program Requirements</h3>
+                <div>
+                    <div class="flex justify-between text-xs mb-1"><span>Target Units</span><span id="label-units" class="font-bold"></span></div>
+                    <input type="range" id="units" min="1" max="200" value="24" oninput="runAnalysis()">
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs mb-1"><span>Floor Count</span><span id="label-floors" class="font-bold"></span></div>
+                    <input type="range" id="floors" min="1" max="15" value="3" oninput="runAnalysis()">
+                </div>
+            </section>
+
+            <div class="bg-slate-900 rounded-xl p-5 text-white space-y-3">
+                <div class="flex justify-between text-[11px]"><span>Total GFA:</span><span id="sum-gfa" class="font-bold"></span></div>
+                <div class="flex justify-between text-[11px]"><span>Lot Coverage:</span><span id="sum-coverage" class="font-bold text-indigo-300"></span></div>
+                <div class="flex justify-between text-[11px]"><span>Required Parking:</span><span id="sum-parking" class="font-bold"></span></div>
+                <div class="pt-2 border-t border-slate-700 text-[10px] text-slate-400 italic">
+                    *Parking requires 325 SF per unit (stall + aisle).
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-1 relative">
+        <div id="rendererContainer"></div>
+    </div>
+
+    <script>
+        const zoneData = [
+            { id: "A-O", f: 0, r: 25, s: 5, h: 45, dens: 145, open: 0 },
+            { id: "A-3/O", f: 0, r: 10, s: 5, h: 45, dens: 145, open: 0 },
+            { id: "A-4", f: 0, r: 20, s: 4, h: 45, dens: 145, open: 0.25 },
+            { id: "C-2", f: 0, r: 10, s: 5, h: 45, dens: 145, open: 0 },
+            { id: "C-4", f: 0, r: 10, s: 5, h: 60, dens: 145, open: 0 },
+            { id: "R-MU", f: 0, r: 0, s: 0, h: 45, dens: 145, open: 0 },
+            { id: "PR-1", f: 10, r: 10, s: 10, h: 45, dens: 145, open: 0 }
+        ];
+
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let lot, parking, buildingGroup, envelope;
+
+        function init3D() {
+            const container = document.getElementById('rendererContainer');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a);
+            camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 1, 3000);
+            camera.position.set(350, 300, 350);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+            sun.position.set(200, 500, 100);
+            sun.castShadow = true;
+            scene.add(sun);
+
+            lot = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshPhongMaterial({ color: 0x16a34a }));
+            lot.rotation.x = -Math.PI/2;
+            scene.add(lot);
+
+            parking = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshPhongMaterial({ color: 0x1e293b }));
+            parking.rotation.x = -Math.PI/2;
+            parking.position.y = 0.05;
+            scene.add(parking);
+
+            buildingGroup = new THREE.Group();
+            scene.add(buildingGroup);
+
+            populateZoning();
+            window.addEventListener('mousemove', onHover);
+            animate();
+        }
+
+        function populateZoning() {
+            const sel = document.getElementById('zoning');
+            zoneData.forEach(z => {
+                const opt = document.createElement('option');
+                opt.value = z.id; opt.text = z.id + " District";
+                sel.appendChild(opt);
+            });
+            runAnalysis();
+        }
+
+        function runAnalysis() {
+            const z = zoneData.find(d => d.id === document.getElementById('zoning').value);
+            const lw = parseInt(document.getElementById('lw').value);
+            const ld = parseInt(document.getElementById('ld').value);
+            const floors = parseInt(document.getElementById('floors').value);
+            const units = parseInt(document.getElementById('units').value);
+            const bw = parseInt(document.getElementById('bw').value);
+            const bd = parseInt(document.getElementById('bd').value);
+
+            // 1. COMPLIANCE CHECK
+            const errors = [];
+            const envW = lw - (z.s * 2);
+            const envD = ld - z.f - z.r;
+            const parkingAreaNeeded = units * 325; // Stall + Aisle
+            const maxUnitsByDensity = Math.floor(((lw * ld) / 43560) * z.dens);
+            const buildableArea = envW * envD;
+            const parkingAreaProvided = buildableArea - (bw * bd);
+
+            if (bw > envW || bd > envD) errors.push("Building exceeds setback envelope.");
+            if (parkingAreaProvided < parkingAreaNeeded) errors.push("Insufficient site area for required parking.");
+            if (units > maxUnitsByDensity) errors.push(`Exceeds density limit (${z.dens} units/acre).`);
+            if (floors * 12 > z.h) errors.push(`Exceeds maximum height (${z.h} ft).`);
+
+            updateHUD(errors);
+
+            // 2. VISUALS
+            lot.scale.set(lw, ld, 1);
+            
+            // Parking sits behind building within the envelope
+            parking.scale.set(envW, envD, 1);
+            parking.position.set(0, 0.02, (ld/2) - z.r - (envD/2));
+
+            updateBuilding(bw, bd, floors, z, ld, errors.length > 0);
+
+            // 3. UI
+            document.getElementById('label-lot').innerText = `${lw}' x ${ld}'`;
+            document.getElementById('label-bldg').innerText = `${bw}' x ${bd}'`;
+            document.getElementById('label-units').innerText = units;
+            document.getElementById('label-floors').innerText = floors;
+            document.getElementById('sum-gfa').innerText = (bw * bd * floors).toLocaleString() + " SF";
+            document.getElementById('sum-coverage').innerText = (((bw * bd) / (lw * ld)) * 100).toFixed(1) + "%";
+            document.getElementById('sum-parking').innerText = `${units} spaces required`;
+        }
+
+        function updateHUD(errors) {
+            const hud = document.getElementById('compliance-hud');
+            const msg = document.getElementById('hud-msg');
+            const title = document.getElementById('hud-title');
+            
+            if (errors.length > 0) {
+                hud.style.display = 'block';
+                hud.className = "mb-6 p-4 rounded-lg bg-red-100 border border-red-200 text-red-800 warning-glow";
+                title.innerText = "NON-COMPLIANT";
+                msg.innerHTML = "• " + errors.join("<br>• ");
+            } else {
+                hud.style.display = 'block';
+                hud.className = "mb-6 p-4 rounded-lg bg-emerald-100 border border-emerald-200 text-emerald-800";
+                title.innerText = "COMPLIANT";
+                msg.innerText = "Building program meets all Appendix B requirements.";
+            }
+        }
+
+        function updateBuilding(bw, bd, floors, z, ld, isError) {
+            while(buildingGroup.children.length > 0) buildingGroup.remove(buildingGroup.children[0]);
+            
+            const h = floors * 12;
+            const mainMat = new THREE.MeshPhongMaterial({ color: isError ? 0xffcccc : 0xffffff });
+            
+            // Main Core
+            const core = new THREE.Mesh(new THREE.BoxGeometry(bw, h, bd), mainMat);
+            core.position.set(0, h/2, -(ld/2) + z.f + (bd/2));
+            core.castShadow = true;
+            buildingGroup.add(core);
+
+            // Architectural Detail: Balconies
+            for(let f=1; f<floors; f++) {
+                const balc = new THREE.Mesh(new THREE.BoxGeometry(bw + 2, 0.5, 4), new THREE.MeshPhongMaterial({color: 0x334155}));
+                balc.position.set(0, (f*12), -(ld/2) + z.f + bd + 1);
+                buildingGroup.add(balc);
+            }
+
+            // Procedural Windows
+            const winGeo = new THREE.PlaneGeometry(3, 5);
+            const winMat = new THREE.MeshPhongMaterial({ color: 0x1e293b, shininess: 100 });
+            for(let f=0; f<floors; f++) {
+                for(let x=-bw/2 + 5; x < bw/2; x += 10) {
+                    const w = new THREE.Mesh(winGeo, winMat);
+                    w.position.set(x, (f*12)+6, -(ld/2) + z.f + bd + 0.1);
+                    buildingGroup.add(w);
+                }
+            }
+
+            // Cornice/Roof Detail
+            const roof = new THREE.Mesh(new THREE.BoxGeometry(bw + 4, 1.5, bd + 4), new THREE.MeshPhongMaterial({color: 0x1e293b}));
+            roof.position.set(0, h + 0.75, -(ld/2) + z.f + (bd/2));
+            buildingGroup.add(roof);
+        }
+
+        function onHover(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(buildingGroup.children.concat([lot, parking]));
+            const tip = document.getElementById('tooltip');
+            if (intersects.length > 0) {
+                tip.style.display = 'block';
+                tip.style.left = event.clientX + 15 + 'px';
+                tip.style.top = event.clientY + 15 + 'px';
+                tip.innerHTML = `Intersection detected at ${intersects[0].point.y.toFixed(1)}' elevation`;
+            } else tip.style.display = 'none';
+        }
+
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+        window.onload = init3D;
+    </script>
+</body>
+</html>
