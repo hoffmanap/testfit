@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Paso 3D Feasibility Pro - v9.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { background-color: #f8fafc; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
+        #rendererContainer { width: 100%; height: 100%; background: #0f172a; cursor: crosshair; }
+        .sidebar { height: 100vh; overflow-y: auto; scrollbar-width: thin; }
+        input[type=range] { accent-color: #4f46e5; height: 5px; width: 100%; }
+        #tooltip { 
+            position: absolute; pointer-events: none; background: rgba(15, 23, 42, 0.95); 
+            color: white; padding: 10px; border-radius: 6px; font-size: 11px; 
+            display: none; border: 1px solid #4f46e5; z-index: 100; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body class="flex text-slate-800">
+
+    <div id="tooltip"></div>
+
+    <div class="sidebar w-85 bg-white p-5 z-10 border-r border-slate-200 flex flex-col">
+        <header class="mb-4">
+            <h1 class="text-lg font-black tracking-tighter">EL PASO <span class="text-indigo-600">3D PRO</span></h1>
+            <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Zoning Compliance v9.0</p>
+        </header>
+
+        <div class="flex-1 overflow-y-auto pr-1 text-xs">
+            <div class="mb-4 pb-4 border-b border-slate-100">
+                <label class="block font-bold text-slate-500 uppercase mb-2" style="font-size: 10px;">District & Use</label>
+                <select id="zoning" class="w-full p-2 bg-slate-50 border border-slate-200 rounded mb-2" onchange="runAnalysis()"></select>
+            </div>
+
+            <div class="mb-4 pb-4 border-b border-slate-100">
+                <label class="block font-bold text-slate-500 uppercase mb-3" style="font-size: 10px;">Site Dimensions</label>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-1"><span>Lot Width</span><span id="label-lw" class="font-bold text-indigo-600"></span></div>
+                        <input type="range" id="lw" min="20" max="600" value="150" oninput="runAnalysis()">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1"><span>Lot Depth</span><span id="label-ld" class="font-bold text-indigo-600"></span></div>
+                        <input type="range" id="ld" min="20" max="600" value="200" oninput="runAnalysis()">
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-4 pb-4 border-b border-slate-100">
+                <label class="block font-bold text-slate-500 uppercase mb-3" style="font-size: 10px;">Building Parameters</label>
+                <div class="space-y-4">
+                    <div class="flex gap-2">
+                        <div class="w-1/2">
+                            <div class="text-[10px] mb-1">Width</div>
+                            <input type="range" id="bw" min="10" max="500" value="60" oninput="runAnalysis()">
+                        </div>
+                        <div class="w-1/2">
+                            <div class="text-[10px] mb-1">Depth</div>
+                            <input type="range" id="bd" min="10" max="500" value="60" oninput="runAnalysis()">
+                        </div>
+                    </div>
+                    <div class="flex gap-2 text-center">
+                        <div class="w-1/2">
+                            <div class="text-[10px] mb-1">Units</div>
+                            <input type="range" id="units" min="1" max="500" value="10" oninput="runAnalysis()">
+                            <div id="label-units" class="font-bold text-indigo-600"></div>
+                        </div>
+                        <div class="w-1/2">
+                            <div class="text-[10px] mb-1">Stories</div>
+                            <input type="range" id="floors" min="1" max="20" value="3" oninput="runAnalysis()">
+                            <div id="label-floors" class="font-bold text-indigo-600"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 rounded-lg p-4 text-white">
+                <h2 class="font-bold text-indigo-400 uppercase mb-3 tracking-widest" style="font-size: 10px;">Compliance Summary</h2>
+                <div class="space-y-2" style="font-size: 11px;">
+                    <div class="flex justify-between"><span>Total GFA:</span><span id="sum-gfa" class="font-bold"></span></div>
+                    <div class="flex justify-between"><span>Unit Count:</span><span id="sum-units" class="font-bold"></span></div>
+                    <div class="flex justify-between"><span>Lot Coverage:</span><span id="sum-coverage" class="font-bold"></span></div>
+                    <div class="flex justify-between"><span>Open Space Req:</span><span id="sum-open" class="font-bold"></span></div>
+                    <div class="flex justify-between text-indigo-300"><span>Parking Spaces:</span><span id="sum-parking" class="font-bold"></span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-1 relative">
+        <div id="rendererContainer"></div>
+    </div>
+
+    <script>
+        const zoneData = [
+            { zone: "R-4 (Duplex)", minL: 7000, minW: 70, minD: 90, f: 10, r: 10, s: 5, h: 35, dens: 2, open: 0 },
+            { zone: "R-5 (Duplex)", minL: 6000, minW: 50, minD: 90, f: 10, r: 10, s: 5, h: 35, dens: 2, open: 0 },
+            { zone: "A-1 (Apts)", minL: 24000, minW: 60, minD: 100, f: 20, r: 25, s: 5, h: 45, dens: 145, open: 0.5 },
+            { zone: "A-2 (Apts)", minL: 6000, minW: 50, minD: 100, f: 0, r: 25, s: 5, h: 45, dens: 145, open: 0.5 },
+            { zone: "A-3 (Apts)", minL: 4000, minW: 50, minD: 80, f: 0, r: 20, s: 4, h: 45, dens: 145, open: 0.3 },
+            { zone: "A-4 (Apts)", minL: 4000, minW: 50, minD: 80, f: 0, r: 20, s: 4, h: 45, dens: 145, open: 0.25 },
+            { zone: "A-O (Apts)", minL: 6000, minW: 50, minD: 90, f: 0, r: 5, s: 5, h: 45, dens: 145, open: 0 },
+            { zone: "C-1 (Apts)", minL: 4000, minW: 50, minD: 50, f: 0, r: 10, s: 5, h: 45, dens: 145, open: 0 },
+            { zone: "C-2 (Apts)", minL: 4000, minW: 50, minD: 50, f: 0, r: 10, s: 5, h: 45, dens: 145, open: 0 },
+            { zone: "C-3 (Apts)", minL: 4000, minW: 50, minD: 50, f: 0, r: 10, s: 5, h: 45, dens: 145, open: 0 },
+            { zone: "C-4 (Apts)", minL: 4000, minW: 50, minD: 50, f: 0, r: 10, s: 5, h: 60, dens: 145, open: 0 },
+            { zone: "C-5 (Apts)", minL: 4000, minW: 50, minD: 50, f: 0, r: 0, s: 0, h: 100, dens: 145, open: 0 },
+            { zone: "R-MU (Apts)", minL: 43560, minW: 0, minD: 0, f: 0, r: 0, s: 0, h: 45, dens: 145, open: 0 },
+            { zone: "G-MU (Apts)", minL: 130680, minW: 0, minD: 0, f: 0, r: 0, s: 0, h: 200, dens: 145, open: 0 }
+        ];
+
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let lot, parking, buildingGroup, stalls, envelope;
+
+        function init3D() {
+            const container = document.getElementById('rendererContainer');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a);
+            camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 1, 3000);
+            camera.position.set(300, 250, 300);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+            const light = new THREE.DirectionalLight(0xffffff, 0.5);
+            light.position.set(200, 400, 100);
+            scene.add(light);
+
+            lot = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshPhongMaterial({ color: 0x16a34a }));
+            lot.rotation.x = -Math.PI/2;
+            scene.add(lot);
+
+            parking = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshPhongMaterial({ color: 0x1e293b }));
+            parking.rotation.x = -Math.PI/2;
+            parking.position.y = 0.05;
+            scene.add(parking);
+
+            buildingGroup = new THREE.Group();
+            scene.add(buildingGroup);
+
+            stalls = new THREE.Group();
+            scene.add(stalls);
+
+            populateZoning();
+            window.addEventListener('mousemove', onHover);
+            animate();
+        }
+
+        function populateZoning() {
+            const sel = document.getElementById('zoning');
+            zoneData.forEach(z => {
+                const opt = document.createElement('option');
+                opt.value = z.zone; opt.text = z.zone;
+                sel.appendChild(opt);
+            });
+            runAnalysis();
+        }
+
+        function runAnalysis() {
+            const z = zoneData.find(d => d.zone === document.getElementById('zoning').value);
+            let lw = parseInt(document.getElementById('lw').value);
+            let ld = parseInt(document.getElementById('ld').value);
+            
+            lw = Math.max(lw, z.minW); ld = Math.max(ld, z.minD);
+            if ((lw * ld) < z.minL) { const r = Math.sqrt(z.minL / (lw*ld)); lw = Math.ceil(lw*r); ld = Math.ceil(ld*r); }
+
+            const floors = parseInt(document.getElementById('floors').value);
+            let units = parseInt(document.getElementById('units').value);
+            const maxUnits = Math.floor(((lw * ld) / 43560) * z.dens);
+            if (units > maxUnits) units = maxUnits;
+
+            const envW = lw - (z.s * 2);
+            const envD = ld - z.f - z.r;
+            let bw = Math.min(parseInt(document.getElementById('bw').value), envW);
+            let bd = Math.min(parseInt(document.getElementById('bd').value), envD);
+
+            lot.scale.set(lw, ld, 1);
+            lot.userData = { label: "Site Area (Setbacks)", w: lw, d: ld, a: lw*ld };
+
+            while(stalls.children.length > 0) stalls.remove(stalls.children[0]);
+            const cols = Math.floor(envW / 9);
+            const rows = Math.ceil(units / cols);
+            const pDepth = rows * 18 + (rows > 1 ? 24 : 0);
+            parking.scale.set(envW, pDepth, 1);
+            parking.position.set(0, 0.05, (ld/2) - z.r - (pDepth/2));
+            parking.userData = { label: "Parking Area", w: envW, d: pDepth, a: envW*pDepth };
+
+            for(let i=0; i<units; i++){
+                const c = i % cols; const r = Math.floor(i / cols);
+                const rect = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(9, 18)), new THREE.LineBasicMaterial({color: 0xffffff}));
+                rect.rotation.x = -Math.PI/2;
+                rect.position.set(-envW/2 + (c*9) + 4.5, 0.08, (ld/2) - z.r - (r * (rows > 1 ? 42 : 18)) - 9);
+                stalls.add(rect);
+            }
+
+            if(envelope) scene.remove(envelope);
+            envelope = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(envW, envD)), new THREE.LineDashedMaterial({color: 0x000000, dashSize: 2, gapSize: 2}));
+            envelope.computeLineDistances(); envelope.rotation.x = -Math.PI/2;
+            envelope.position.set(0, 0.1, (ld/2) - z.r - (envD/2));
+            envelope.userData = { label: "Buildable Area", w: envW, d: envD, a: envW*envD };
+            scene.add(envelope);
+
+            updateBuildingDetails(bw, bd, floors, z, ld);
+
+            document.getElementById('label-lw').innerText = lw + "'";
+            document.getElementById('label-ld').innerText = ld + "'";
+            document.getElementById('label-units').innerText = units;
+            document.getElementById('label-floors').innerText = floors;
+            document.getElementById('sum-gfa').innerText = (bw * bd * floors).toLocaleString() + " SF";
+            document.getElementById('sum-units').innerText = units;
+            document.getElementById('sum-coverage').innerText = (((bw * bd) / (lw * ld)) * 100).toFixed(1) + "%";
+            document.getElementById('sum-open').innerText = z.open > 0 ? (z.open * 100) + "%" : "N/A";
+            document.getElementById('sum-parking').innerText = units;
+        }
+
+        function updateBuildingDetails(bw, bd, floors, z, ld) {
+            while(buildingGroup.children.length > 0) buildingGroup.remove(buildingGroup.children[0]);
+            const h = floors * 12;
+            const main = new THREE.Mesh(new THREE.BoxGeometry(bw, h, bd), new THREE.MeshPhongMaterial({color: 0xffffff}));
+            main.position.set(0, h/2, -(ld/2) + z.f + (bd/2));
+            main.userData = { label: "Building Massing", w: bw, d: bd, a: bw*bd };
+            buildingGroup.add(main);
+
+            // Eaves
+            const eave = new THREE.Mesh(new THREE.BoxGeometry(bw + 2, 1, bd + 2), new THREE.MeshPhongMaterial({color: 0x475569}));
+            eave.position.set(0, h, -(ld/2) + z.f + (bd/2));
+            buildingGroup.add(eave);
+
+            // Windows & Doors Articulation
+            for(let f=0; f<floors; f++) {
+                for(let x=-bw/2 + 4; x<bw/2; x+=10) {
+                    const win = new THREE.Mesh(new THREE.PlaneGeometry(3, 5), new THREE.MeshPhongMaterial({color: 0x334155}));
+                    win.position.set(x, (f*12)+6, -(ld/2) + z.f + bd + 0.1);
+                    buildingGroup.add(win);
+                }
+            }
+            const door = new THREE.Mesh(new THREE.PlaneGeometry(4, 7), new THREE.MeshPhongMaterial({color: 0x1e293b}));
+            door.position.set(0, 3.5, -(ld/2) + z.f + bd + 0.15);
+            buildingGroup.add(door);
+        }
+
+        function onHover(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([lot, parking, envelope, buildingGroup.children[0]], true);
+            const tip = document.getElementById('tooltip');
+            if(intersects.length > 0) {
+                const d = intersects[0].object.userData.label ? intersects[0].object.userData : intersects[0].object.parent.children[0].userData;
+                tip.style.display = 'block'; tip.style.left = event.clientX + 15 + 'px'; tip.style.top = event.clientY + 15 + 'px';
+                tip.innerHTML = `<b>${d.label}</b><br>Dim: ${d.w}' x ${d.d}'<br>Area: ${d.a.toLocaleString()} SF`;
+            } else tip.style.display = 'none';
+        }
+
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+        init3D();
+    </script>
+</body>
+</html>
